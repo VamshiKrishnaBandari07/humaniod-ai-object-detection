@@ -1,0 +1,24 @@
+[project]
+name = "spatial-change"
+version = "1.0.0"
+description = "Shared 3D maps and semantic change descriptions from two phone recordings of the same indoor space."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "opencv-python>=4.8",
+  "scipy>=1.11",
+]
+
+[project.scripts]
+spatial-change = "spatial_change.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["spatial_change*"]
+
+[tool.setuptools.package-data]
+spatial_change = ["static/*"]

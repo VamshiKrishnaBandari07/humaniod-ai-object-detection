@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Field memory · Humanoid spatial</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #10120e;
+    --rail: #161914;
+    --ink: #f3f0e8;
+    --muted: #9c978c;
+    --line: rgba(243, 240, 232, 0.14);
+    --lime: #d6ff4a;
+    --lime-ink: #16180f;
+    --moved: #f0b45a;
+    --added: #8ee0a8;
+    --removed: #ff7d72;
+    --panel: #1c2018;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Bahnschrift, "Segoe UI", sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .mark {
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--lime);
+    position: relative;
+    flex: none;
+  }
+  .mark::after {
+    content: "";
+    position: absolute;
+    width: 5px; height: 5px;
+    right: -2px; bottom: -2px;
+    background: var(--lime);
+  }
+  .eyebrow {
+    margin: 0;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--lime);
+  }
+  h1 { margin: 1px 0 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
+  .status {
+    display: flex; align-items: center; gap: 8px;
+    color: var(--muted); font-size: 13px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.live { background: var(--lime); box-shadow: 0 0 0 4px rgba(214, 255, 74, 0.15); }
+  .dot.busy { background: var(--moved); }
+  .dot.bad { background: var(--removed); }
+  .shell {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 392px 1fr;
+  }
+  .rail, .stage { min-height: 0; overflow: auto; }
+  .rail {
+    background: var(--rail);
+    border-right: 1px solid var(--line);
+    padding: 22px;
+  }
+  .stage { padding: 28px 32px 48px; }
+  .rail h2, .stage h2 {
+    margin: 0 0 6px;
+    font-size: 13px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .lede { margin: 0 0 18px; color: var(--muted); line-height: 1.45; font-size: 14px; }
+  .drop {
+    display: block;
+    border: 1px dashed rgba(243, 240, 232, 0.28);
+    background: rgba(0, 0, 0, 0.18);
+    padding: 12px;
+    margin-bottom: 12px;
+    cursor: pointer;
+  }
+  .drop.hot, .drop:hover { border-color: var(--lime); background: rgba(214, 255, 74, 0.05); }
+  .drop.ready { border-style: solid; border-color: rgba(214, 255, 74, 0.55); }
+  .drop input { display: none; }
+  .drop strong { display: block; font-size: 15px; font-weight: 600; }
+  .drop span { color: var(--muted); font-size: 13px; }
+  .drop video, .drop img.poster {
+    display: none;
+    width: 100%;
+    height: 112px;
+    object-fit: cover;
+    margin-top: 10px;
+    background: #000;
+  }
+  .drop.ready video { display: block; }
+  .meta { margin-top: 6px; font-size: 12px; color: var(--muted); }
+  label.field { display: block; margin: 16px 0 8px; font-size: 13px; color: var(--muted); }
+  .fov-row { display: flex; align-items: center; gap: 12px; }
+  input[type="range"] { flex: 1; accent-color: var(--lime); }
+  #fov-readout { min-width: 42px; color: var(--ink); }
+  .hint { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+  .actions { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
+  button.primary, button.ghost {
+    border: 0;
+    padding: 13px 14px;
+    cursor: pointer;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 12px;
+    font-weight: 650;
+  }
+  button.primary { background: var(--lime); color: var(--lime-ink); }
+  button.primary:disabled {
+    background: #34382f;
+    color: #8a867c;
+    cursor: not-allowed;
+  }
+  button.ghost:disabled { opacity: 0.45; cursor: progress; }
+  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  details { margin-top: 16px; color: var(--muted); font-size: 13px; }
+  details summary { cursor: pointer; }
+  .log {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    color: #c8c3b6;
+    white-space: pre-wrap;
+    min-height: 1.2em;
+  }
+  .bar {
+    height: 3px;
+    background: rgba(243, 240, 232, 0.12);
+    margin: 8px 0 14px;
+  }
+  .bar > div { height: 100%; width: 0; background: var(--lime); }
+  .banner {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: baseline;
+    padding: 10px 12px;
+    margin-bottom: 18px;
+    background: rgba(214, 255, 74, 0.08);
+    border: 1px solid rgba(214, 255, 74, 0.25);
+    color: #e7f7b0;
+    font-size: 13px;
+  }
+  .banner button {
+    background: transparent;
+    border: 0;
+    color: var(--lime);
+    cursor: pointer;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 11px;
+  }
+  .result-head { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: start; }
+  .score {
+    min-width: 84px;
+    padding: 10px 12px 12px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+  }
+  .score b { display: block; font-size: 28px; letter-spacing: -0.04em; font-weight: 600; }
+  .score span { color: var(--muted); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+  .summary { margin: 0; font-size: 26px; font-weight: 500; letter-spacing: -0.03em; line-height: 1.28; max-width: 44rem; }
+  .changes { display: flex; flex-direction: column; gap: 8px; margin: 22px 0; }
+  .change {
+    display: grid;
+    grid-template-columns: 92px 1fr;
+    gap: 14px;
+    padding: 12px 14px;
+    background: var(--panel);
+    border-left: 3px solid var(--muted);
+  }
+  .change.moved { border-color: var(--moved); }
+  .change.added { border-color: var(--added); }
+  .change.removed { border-color: var(--removed); }
+  .change .kind {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-weight: 650;
+  }
+  .change.moved .kind { color: var(--moved); }
+  .change.added .kind { color: var(--added); }
+  .change.removed .kind { color: var(--removed); }
+  .change p { margin: 0; line-height: 1.45; }
+  .swatch {
+    display: inline-block;
+    width: 8px; height: 8px;
+    margin-right: 6px;
+    vertical-align: baseline;
+  }
+  .stills { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 8px 0 22px; }
+  figure { margin: 0; }
+  figcaption {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .stills img { width: 100%; height: 176px; object-fit: cover; object-position: center 42%; display: block; background: #000; }
+  .viewport {
+    background: #0c0e0a;
+    border: 1px solid var(--line);
+    position: relative;
+  }
+  canvas { width: 100%; display: block; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+    margin: 8px 0 10px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .toolbar label { display: flex; gap: 6px; align-items: center; }
+  .toolbar button {
+    margin-left: auto;
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--ink);
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .maps { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 12px; }
+  .maps canvas { background: #0c0e0a; cursor: default; }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-top: 18px;
+  }
+  .stat { padding: 10px 12px; background: var(--panel); }
+  .stat b { display: block; font-size: 18px; font-weight: 600; letter-spacing: -0.03em; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .gauge { color: var(--muted); font-size: 13px; line-height: 1.45; margin: 12px 0 0; max-width: 46rem; }
+  .files { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 16px; font-size: 13px; }
+  .files a { color: var(--lime); }
+  .empty h2 { letter-spacing: -0.03em; text-transform: none; font-size: 32px; font-weight: 560; max-width: 16ch; }
+  .steps { list-style: none; padding: 0; margin: 22px 0 0; max-width: 38rem; }
+  .steps li { display: grid; grid-template-columns: 28px 1fr; gap: 8px; margin: 0 0 12px; color: #d9d4c8; line-height: 1.4; }
+  .steps b { color: var(--lime); font-weight: 600; }
+  .error {
+    padding: 12px 14px;
+    border: 1px solid rgba(255, 125, 114, 0.5);
+    color: #ffd0cb;
+    margin-bottom: 16px;
+  }
+  .hidden { display: none !important; }
+  @media (max-width: 980px) {
+    .shell { grid-template-columns: 1fr; }
+    body { height: auto; }
+    .rail, .stage { overflow: visible; }
+    .stats, .maps, .stills, .result-head { grid-template-columns: 1fr; }
+    .summary { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <div>
+      <p class="eyebrow">Humanoid spatial</p>
+      <h1>Field memory</h1>
+    </div>
+  </div>
+  <div class="status"><span id="dot" class="dot"></span><span id="status-text">Idle</span></div>
+</header>
+<div class="shell">
+  <aside class="rail">
+    <h2>The two visits</h2>
+    <p class="lede">Film the same corner twice. The earlier visit and the later visit become one map, then a sentence for each object that moved, appeared, or vanished.</p>
+    <form id="form">
+      <label class="drop" id="drop-before">
+        <input id="before" name="before" type="file" accept="video/mp4,video/quicktime,video/webm,video/*" />
+        <strong>Earlier visit</strong>
+        <span>Drop the first recording, or browse</span>
+        <video id="prev-before" muted playsinline></video>
+        <div class="meta" id="meta-before"></div>
+      </label>
+      <label class="drop" id="drop-after">
+        <input id="after" name="after" type="file" accept="video/mp4,video/quicktime,video/webm,video/*" />
+        <strong>Later visit</strong>
+        <span>Drop the second recording, or browse</span>
+        <video id="prev-after" muted playsinline></video>
+        <div class="meta" id="meta-after"></div>
+      </label>
+      <label class="field" for="fov">Vertical field of view</label>
+      <div class="fov-row">
+        <input id="fov" name="fov" type="range" min="35" max="90" value="62" />
+        <span id="fov-readout">62°</span>
+      </div>
+      <p class="hint">Used when the phone's intrinsics are unknown. A main camera is usually near 62°.</p>
+      <input type="hidden" name="max_frames" value="12" />
+      <details>
+        <summary>Attach camera intrinsics</summary>
+        <p class="hint">Optional JSON with fx, fy, cx, cy, width, and height. It replaces the field-of-view guess.</p>
+        <input id="intrinsics" name="intrinsics" type="file" accept="application/json,.json" />
+      </details>
+      <div class="actions">
+        <button class="primary" id="compare" type="submit" disabled>Build the shared map</button>
+        <button class="ghost" id="demo" type="button">Run the synthetic room</button>
+      </div>
+      <p class="hint">A comparison stays on this computer and takes about a minute. Twelve frames are sampled from each clip.</p>
+    </form>
+    <div class="bar hidden" id="bar"><div id="bar-fill"></div></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </aside>
+  <main class="stage">
+    <section id="empty">
+      <h2>One room, held in common</h2>
+      <p class="lede">Upload two recordings, or run the synthetic room. That room has a known answer: a red object moves, a blue object leaves, and a green object arrives.</p>
+      <ol class="steps">
+        <li><b>01</b><span>Each clip becomes a sparse map, then a denser cloud from photometric depth.</span></li>
+        <li><b>02</b><span>The parts that did not move align the second cloud into the first.</span></li>
+        <li><b>03</b><span>Up follows the cameras. Saturated colour groups become objects.</span></li>
+        <li><b>04</b><span>The page says what moved, what was added, and what was removed.</span></li>
+      </ol>
+    </section>
+    <section id="result" class="hidden" aria-live="polite"></section>
+  </main>
+</div>
+<script>
+const SWATCH = {
+  red: "#e24b4b", orange: "#e48a3a", yellow: "#e2c14a", brown: "#8a5a32",
+  green: "#3aaa62", cyan: "#3aa8b8", blue: "#3d6fe0", purple: "#8a64d6",
+  gray: "#9aa0aa", white: "#f4f1ea", black: "#2a2a2a"
+};
+const state = {
+  job: null,
+  scene: null,
+  yaw: 0.7,
+  pitch: 0.55,
+  dist: 1,
+  drag: null
+};
+
+const form = document.getElementById("form");
+const compareBtn = document.getElementById("compare");
+const demoBtn = document.getElementById("demo");
+const logEl = document.getElementById("log");
+const bar = document.getElementById("bar");
+const barFill = document.getElementById("bar-fill");
+const fov = document.getElementById("fov");
+const fovReadout = document.getElementById("fov-readout");
+
+fov.addEventListener("input", () => { fovReadout.textContent = fov.value + "°"; });
+wireDrop("before", "drop-before", "prev-before", "meta-before");
+wireDrop("after", "drop-after", "prev-after", "meta-after");
+document.getElementById("before").addEventListener("change", syncCompare);
+document.getElementById("after").addEventListener("change", syncCompare);
+
+form.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const body = new FormData(form);
+  startJob("/api/compare", { method: "POST", body });
+});
+demoBtn.addEventListener("click", () => startJob("/api/demo", { method: "POST" }));
+
+function wireDrop(inputId, dropId, videoId, metaId) {
+  const input = document.getElementById(inputId);
+  const drop = document.getElementById(dropId);
+  const video = document.getElementById(videoId);
+  const meta = document.getElementById(metaId);
+  ["dragenter", "dragover"].forEach((name) => drop.addEventListener(name, (event) => {
+    event.preventDefault();
+    drop.classList.add("hot");
+  }));
+  ["dragleave", "drop"].forEach((name) => drop.addEventListener(name, (event) => {
+    event.preventDefault();
+    drop.classList.remove("hot");
+  }));
+  drop.addEventListener("drop", (event) => {
+    const file = event.dataTransfer.files && event.dataTransfer.files[0];
+    if (!file) return;
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event("change"));
+  });
+  input.addEventListener("change", () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    drop.classList.add("ready");
+    if (video.src) URL.revokeObjectURL(video.src);
+    video.src = URL.createObjectURL(file);
+    video.play().catch(() => {});
+    meta.textContent = file.name + " · " + formatBytes(file.size);
+  });
+}
+
+function syncCompare() {
+  const ready = document.getElementById("before").files.length && document.getElementById("after").files.length;
+  compareBtn.disabled = !ready || compareBtn.dataset.busy === "1";
+}
+
+function formatBytes(size) {
+  if (size < 1024 * 1024) return Math.max(1, Math.round(size / 1024)) + " KB";
+  return (size / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function setStatus(mode, text) {
+  const dot = document.getElementById("dot");
+  dot.className = "dot" + (mode ? " " + mode : "");
+  document.getElementById("status-text").textContent = text;
+}
+
+async function startJob(url, options) {
+  compareBtn.dataset.busy = "1";
+  compareBtn.disabled = true;
+  demoBtn.disabled = true;
+  setStatus("busy", "Working");
+  logEl.textContent = "Sending the recordings…";
+  bar.classList.remove("hidden");
+  barFill.style.width = "4%";
+  try {
+    const response = await fetch(url, options);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "The comparison did not start.");
+    poll(payload.id);
+  } catch (error) {
+    fail(error.message);
+  }
+}
+
+async function poll(id) {
+  const timer = setInterval(async () => {
+    try {
+      const response = await fetch("/api/jobs/" + id);
+      const job = await response.json();
+      if (!response.ok) throw new Error(job.error || "Lost the comparison.");
+      paintProgress(job);
+      if (job.status === "done") {
+        clearInterval(timer);
+        await showJob(job);
+        unlock();
+      } else if (job.status === "error") {
+        clearInterval(timer);
+        fail(job.error || "The comparison failed.");
+      }
+    } catch (error) {
+      clearInterval(timer);
+      fail(error.message);
+    }
+  }, 800);
+}
+
+function paintProgress(job) {
+  const log = job.log || [];
+  logEl.textContent = log.slice(-8).join("\n");
+  const progress = stageProgress(log);
+  barFill.style.width = progress.percent + "%";
+  setStatus("busy", progress.label);
+}
+
+function stageProgress(log) {
+  const text = log.join("\n");
+  if (text.includes("Wrote the report")) return { percent: 100, label: "Report ready" };
+  if (text.includes("Comparing")) return { percent: 92, label: "Describing changes" };
+  if (text.includes("Aligning")) return { percent: 80, label: "Aligning the maps" };
+  if (text.includes("Densifying")) return { percent: 68, label: "Filling in depth" };
+  if (text.includes("second recording")) return { percent: 48, label: "Second map" };
+  if (text.includes("first recording") || text.includes("posed frame")) return { percent: 30, label: "First map" };
+  if (text.includes("Reading") || text.includes("Rendering") || text.includes("rendering frame")) return { percent: 12, label: "Reading the visits" };
+  return { percent: 6, label: "Working" };
+}
+
+function fail(message) {
+  unlock();
+  setStatus("bad", "Needs another try");
+  logEl.textContent = message;
+  const result = document.getElementById("result");
+  result.classList.remove("hidden");
+  document.getElementById("empty").classList.add("hidden");
+  result.innerHTML = "";
+  const box = document.createElement("div");
+  box.className = "error";
+  box.textContent = message;
+  result.appendChild(box);
+}
+
+function unlock() {
+  compareBtn.dataset.busy = "";
+  demoBtn.disabled = false;
+  syncCompare();
+}
+
+async function showJob(job) {
+  state.job = job;
+  state.bounds = null;
+  setStatus("live", job.id === "sample" ? "Scored room" : "Ready");
+  barFill.style.width = "100%";
+  const sceneResponse = await fetch("/api/jobs/" + job.id + "/scene");
+  state.scene = sceneResponse.ok ? await sceneResponse.json() : null;
+  renderResult(job);
+  drawAll();
+}
+
+function renderResult(job) {
+  const report = job.report || {};
+  const root = document.getElementById("result");
+  document.getElementById("empty").classList.add("hidden");
+  root.classList.remove("hidden");
+  root.innerHTML = "";
+  if (job.id === "sample") {
+    const banner = document.createElement("div");
+    banner.className = "banner";
+    banner.innerHTML = "<span>Showing the synthetic room. Upload two recordings on the left to test another pair.</span>";
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.textContent = "Hide";
+    dismiss.addEventListener("click", () => banner.remove());
+    banner.appendChild(dismiss);
+    root.appendChild(banner);
+  }
+  const head = document.createElement("div");
+  head.className = "result-head";
+  const score = report.reconstruction && report.reconstruction.score;
+  if (!score) head.style.gridTemplateColumns = "1fr";
+  if (score) {
+    const badge = document.createElement("div");
+    badge.className = "score";
+    const strong = document.createElement("b");
+    strong.textContent = score.matched + " / " + score.expected;
+    const caption = document.createElement("span");
+    caption.textContent = "matched";
+    badge.append(strong, caption);
+    head.appendChild(badge);
+  }
+  const summary = document.createElement("p");
+  summary.className = "summary";
+  summary.textContent = report.summary || "No changes were written.";
+  head.appendChild(summary);
+  root.appendChild(head);
+
+  const changes = document.createElement("div");
+  changes.className = "changes";
+  for (const change of report.changes || []) {
+    const row = document.createElement("article");
+    row.className = "change " + change.type;
+    const kind = document.createElement("div");
+    kind.className = "kind";
+    const swatch = document.createElement("i");
+    swatch.className = "swatch";
+    swatch.style.background = SWATCH[change.color] || "#d6ff4a";
+    kind.append(swatch, document.createTextNode(change.type));
+    const copy = document.createElement("p");
+    copy.textContent = change.description;
+    row.append(kind, copy);
+    changes.appendChild(row);
+  }
+  if (!(report.changes || []).length) {
+    const row = document.createElement("article");
+    row.className = "change";
+    const copy = document.createElement("p");
+    copy.textContent = "Nothing in the two clouds crossed the move, add, or remove test.";
+    row.appendChild(copy);
+    changes.appendChild(row);
+  }
+  root.appendChild(changes);
+
+  const stills = document.createElement("div");
+  stills.className = "stills";
+  stills.append(still("Earlier visit", "/api/jobs/" + job.id + "/before"), still("Later visit", "/api/jobs/" + job.id + "/after"));
+  root.appendChild(stills);
+
+  const caption = document.createElement("figcaption");
+  caption.textContent = "Shared scene · Z is up · drag to orbit · scroll to zoom";
+  root.appendChild(caption);
+  const tools = document.createElement("div");
+  tools.className = "toolbar";
+  tools.append(toggle("Before", "show-before", true), toggle("After", "show-after", true), toggle("Changes", "show-changes", true));
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.textContent = "Reset view";
+  reset.addEventListener("click", () => { state.yaw = 0.7; state.pitch = 0.55; state.dist = 1; drawOrbit(); });
+  tools.appendChild(reset);
+  root.appendChild(tools);
+  const viewport = document.createElement("div");
+  viewport.className = "viewport";
+  const orbit = document.createElement("canvas");
+  orbit.id = "orbit";
+  viewport.appendChild(orbit);
+  root.appendChild(viewport);
+  bindOrbit(orbit);
+
+  const maps = document.createElement("div");
+  maps.className = "maps";
+  maps.append(mapCard("Top", "top"), mapCard("Front", "front"), mapCard("Side", "side"));
+  root.appendChild(maps);
+
+  const reconstruction = report.reconstruction || {};
+  const stats = document.createElement("div");
+  stats.className = "stats";
+  stats.append(
+    stat(pair(reconstruction.cameras_before, reconstruction.cameras_after), "Cameras posed"),
+    stat(pair(reconstruction.dense_points_before, reconstruction.dense_points_after), "Dense points"),
+    stat(reconstruction.alignment_inliers == null ? "—" : String(reconstruction.alignment_inliers), "Alignment inliers"),
+    stat(reconstruction.alignment_scale == null ? "—" : Number(reconstruction.alignment_scale).toFixed(2), "Scale")
+  );
+  root.appendChild(stats);
+  if (reconstruction.gauge) {
+    const gauge = document.createElement("p");
+    gauge.className = "gauge";
+    gauge.textContent = reconstruction.gauge;
+    root.appendChild(gauge);
+  }
+  const files = document.createElement("div");
+  files.className = "files";
+  for (const name of ["report.md", "preview.png", "viewer.html", "scene_before.ply", "scene_after.ply", "changes.ply"]) {
+    const link = document.createElement("a");
+    link.href = "/api/jobs/" + job.id + "/file/" + name;
+    link.textContent = name;
+    files.appendChild(link);
+  }
+  root.appendChild(files);
+  requestAnimationFrame(() => fitCanvases());
+}
+
+function still(label, src) {
+  const figure = document.createElement("figure");
+  const caption = document.createElement("figcaption");
+  caption.textContent = label;
+  const image = document.createElement("img");
+  image.alt = label;
+  image.src = src;
+  image.addEventListener("error", () => figure.remove());
+  figure.append(caption, image);
+  return figure;
+}
+
+function toggle(label, id, checked) {
+  const wrap = document.createElement("label");
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.id = id;
+  input.checked = checked;
+  input.addEventListener("change", drawAll);
+  wrap.append(input, document.createTextNode(label));
+  return wrap;
+}
+
+function mapCard(label, id) {
+  const figure = document.createElement("figure");
+  const caption = document.createElement("figcaption");
+  caption.textContent = label;
+  const canvas = document.createElement("canvas");
+  canvas.id = id;
+  figure.append(caption, canvas);
+  return figure;
+}
+
+function stat(value, label) {
+  const box = document.createElement("div");
+  box.className = "stat";
+  const strong = document.createElement("b");
+  strong.textContent = value;
+  const span = document.createElement("span");
+  span.textContent = label;
+  box.append(strong, span);
+  return box;
+}
+
+function pair(a, b) {
+  if (a == null && b == null) return "—";
+  return formatNum(a) + " / " + formatNum(b);
+}
+function formatNum(value) {
+  if (value == null) return "—";
+  return Number(value).toLocaleString("en-GB");
+}
+
+function fitCanvases() {
+  const orbit = document.getElementById("orbit");
+  if (!orbit) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const width = orbit.clientWidth || 800;
+  orbit.width = Math.floor(width * dpr);
+  orbit.height = Math.floor(420 * dpr);
+  orbit.style.height = "420px";
+  for (const id of ["top", "front", "side"]) {
+    const canvas = document.getElementById(id);
+    const w = canvas.clientWidth || 240;
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(180 * dpr);
+    canvas.style.height = "180px";
+  }
+  drawAll();
+}
+
+function scenePoints() {
+  if (!state.scene) return [];
+  const layers = state.scene.layers || {};
+  const dots = [];
+  const take = (name, color, size, stride) => {
+    const points = layers[name] || [];
+    const step = Math.max(1, Math.ceil(points.length / stride));
+    for (let i = 0; i < points.length; i += step) {
+      const point = points[i];
+      dots.push({ p: point, color: color || "rgb(" + point[3] + "," + point[4] + "," + point[5] + ")", size });
+    }
+  };
+  if (checked("show-before")) take("before", null, 1.7, 3500);
+  if (checked("show-after")) take("after", null, 1.7, 3500);
+  if (checked("show-changes")) {
+    take("removed", "rgb(255,125,114)", 2.6, 2000);
+    take("added", "rgb(142,224,168)", 2.6, 2000);
+    take("moved", "rgb(240,180,90)", 2.6, 2000);
+  }
+  return dots;
+}
+
+function checked(id) {
+  const input = document.getElementById(id);
+  return !input || input.checked;
+}
+
+function cloudCenter() {
+  if (state.bounds) return state.bounds;
+  const layers = (state.scene && state.scene.layers) || {};
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (const points of Object.values(layers)) {
+    for (const point of points) {
+      for (let k = 0; k < 3; k++) {
+        min[k] = Math.min(min[k], point[k]);
+        max[k] = Math.max(max[k], point[k]);
+      }
+    }
+  }
+  if (!isFinite(min[0])) return { c: [0, 0, 0], span: 1, min, max };
+  const c = min.map((value, index) => (value + max[index]) / 2);
+  const span = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 1e-3);
+  state.bounds = { c, span, min, max };
+  return state.bounds;
+}
+
+function drawOrbit() {
+  const canvas = document.getElementById("orbit");
+  if (!canvas || !state.scene) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  const dpr = w / Math.max(canvas.clientWidth, 1);
+  ctx.clearRect(0, 0, w, h);
+  const { c, span, min } = cloudCenter();
+  const cosy = Math.cos(state.yaw), siny = Math.sin(state.yaw);
+  const cosp = Math.cos(state.pitch), sinp = Math.sin(state.pitch);
+  const scale = (Math.min(w, h) * 0.78) / span * state.dist;
+  drawFloor(ctx, c, min[2], cosy, siny, cosp, sinp, scale, w, h);
+  const painted = [];
+  for (const dot of scenePoints()) {
+    const x = dot.p[0] - c[0], y = dot.p[1] - c[1], z = dot.p[2] - c[2];
+    const xr = x * cosy - y * siny;
+    const yr = x * siny + y * cosy;
+    const yr2 = yr * cosp - z * sinp;
+    const zr = yr * sinp + z * cosp;
+    painted.push({ x: w / 2 + xr * scale, y: h / 2 - zr * scale, depth: yr2, color: dot.color, size: dot.size * dpr });
+  }
+  painted.sort((a, b) => a.depth - b.depth);
+  for (const dot of painted) {
+    ctx.fillStyle = dot.color;
+    ctx.fillRect(dot.x, dot.y, dot.size, dot.size);
+  }
+  ctx.strokeStyle = "rgb(240,180,90)";
+  ctx.fillStyle = "rgb(240,180,90)";
+  ctx.lineWidth = 1.5 * dpr;
+  if (checked("show-changes")) {
+    for (const change of state.scene.changes || []) {
+      if (change.type !== "moved" || !change.centroid_to) continue;
+      const a = project(change.centroid, c, cosy, siny, cosp, sinp, scale, w, h);
+      const b = project(change.centroid_to, c, cosy, siny, cosp, sinp, scale, w, h);
+      arrow(ctx, a[0], a[1], b[0], b[1]);
+    }
+  }
+}
+
+function drawFloor(ctx, c, floorZ, cosy, siny, cosp, sinp, scale, w, h) {
+  ctx.strokeStyle = "rgba(214,255,74,0.18)";
+  ctx.lineWidth = 1;
+  const half = 1.4;
+  const step = 0.35;
+  const line = (x1, y1, x2, y2) => {
+    const a = project([c[0] + x1, c[1] + y1, floorZ], c, cosy, siny, cosp, sinp, scale, w, h);
+    const b = project([c[0] + x2, c[1] + y2, floorZ], c, cosy, siny, cosp, sinp, scale, w, h);
+    ctx.beginPath();
+    ctx.moveTo(a[0], a[1]);
+    ctx.lineTo(b[0], b[1]);
+    ctx.stroke();
+  };
+  for (let x = -half; x <= half + 1e-6; x += step) line(x, -half, x, half);
+  for (let y = -half; y <= half + 1e-6; y += step) line(-half, y, half, y);
+}
+
+function project(point, c, cosy, siny, cosp, sinp, scale, w, h) {
+  const x = point[0] - c[0], y = point[1] - c[1], z = point[2] - c[2];
+  const xr = x * cosy - y * siny;
+  const yr = x * siny + y * cosy;
+  const zr = yr * sinp + z * cosp;
+  return [w / 2 + xr * scale, h / 2 - zr * scale];
+}
+
+function arrow(ctx, x1, y1, x2, y2) {
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const len = 14;
+  ctx.beginPath();
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 - len * Math.cos(angle - 0.45), y2 - len * Math.sin(angle - 0.45));
+  ctx.lineTo(x2 - len * Math.cos(angle + 0.45), y2 - len * Math.sin(angle + 0.45));
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawMaps() {
+  if (!state.scene) return;
+  paintMap(document.getElementById("top"), 0, 1);
+  paintMap(document.getElementById("front"), 0, 2);
+  paintMap(document.getElementById("side"), 1, 2);
+}
+
+function paintMap(canvas, axisX, axisY) {
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  const dpr = w / Math.max(canvas.clientWidth, 1);
+  ctx.clearRect(0, 0, w, h);
+  const { min, max } = cloudCenter();
+  const spanX = Math.max(max[axisX] - min[axisX], 1e-3);
+  const spanY = Math.max(max[axisY] - min[axisY], 1e-3);
+  const xy = (point) => {
+    const x = (point[axisX] - min[axisX]) / spanX;
+    const y = (point[axisY] - min[axisY]) / spanY;
+    return [16 + x * (w - 32), h - 16 - y * (h - 32)];
+  };
+  const dots = (name, color, radius) => {
+    for (const point of ((state.scene.layers || {})[name] || [])) {
+      const place = xy(point);
+      ctx.fillStyle = color || "rgb(" + point[3] + "," + point[4] + "," + point[5] + ")";
+      ctx.fillRect(place[0], place[1], radius * dpr, radius * dpr);
+    }
+  };
+  if (checked("show-before")) dots("before", "rgba(160,164,170,0.55)", 1.5);
+  if (checked("show-after")) dots("after", "rgba(210,214,206,0.4)", 1.5);
+  if (checked("show-changes")) {
+    dots("removed", "rgb(255,125,114)", 2.4);
+    dots("added", "rgb(142,224,168)", 2.4);
+    dots("moved", "rgb(240,180,90)", 2.4);
+    ctx.strokeStyle = "rgb(240,180,90)";
+    ctx.lineWidth = 1.5;
+    for (const change of state.scene.changes || []) {
+      if (change.type !== "moved" || !change.centroid_to) continue;
+      const a = xy(change.centroid), b = xy(change.centroid_to);
+      ctx.beginPath();
+      ctx.moveTo(a[0], a[1]);
+      ctx.lineTo(b[0], b[1]);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawAll() {
+  drawOrbit();
+  drawMaps();
+}
+
+function bindOrbit(canvas) {
+  canvas.addEventListener("pointerdown", (event) => {
+    canvas.setPointerCapture(event.pointerId);
+    state.drag = { x: event.clientX, y: event.clientY, yaw: state.yaw, pitch: state.pitch };
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!state.drag) return;
+    state.yaw = state.drag.yaw + (event.clientX - state.drag.x) * 0.008;
+    state.pitch = Math.max(-1.2, Math.min(1.4, state.drag.pitch + (event.clientY - state.drag.y) * 0.008));
+    drawOrbit();
+  });
+  canvas.addEventListener("pointerup", () => { state.drag = null; });
+  canvas.addEventListener("pointerleave", () => { state.drag = null; });
+  canvas.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    state.dist = Math.max(0.45, Math.min(2.8, state.dist * (event.deltaY > 0 ? 0.92 : 1.08)));
+    drawOrbit();
+  }, { passive: false });
+}
+
+window.addEventListener("resize", () => { if (state.scene) fitCanvases(); });
+
+fetch("/api/sample").then(async (response) => {
+  if (!response.ok) return;
+  const job = await response.json();
+  await showJob(job);
+  setStatus("live", "Scored room");
+}).catch(() => {});
+</script>
+</body>
+</html>
