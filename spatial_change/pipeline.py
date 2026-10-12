@@ -21,7 +21,7 @@ from spatial_change.geometry import (
     voxel_downsample,
 )
 from spatial_change.sfm import match_reconstructions, reconstruct
-from spatial_change.viz import write_ply, write_preview, write_report, write_viewer
+from spatial_change.viz import draw_identification, identify_on_frames, write_ply, write_preview, write_report, write_viewer
 
 
 def run_comparison(
@@ -88,6 +88,35 @@ def run_comparison(
         cloud_a, colors_a, cloud_b, colors_b,
         voxel=voxel, up=np.array([0.0, 0.0, 1.0]),
     )
+    before_bgr = cv2.cvtColor(frames_a[len(frames_a) // 2], cv2.COLOR_RGB2BGR)
+    after_bgr = cv2.cvtColor(frames_b[len(frames_b) // 2], cv2.COLOR_RGB2BGR)
+    inlier_count = int(inliers.sum())
+    marked = None
+    if ground_truth is None:
+        print("Looking for objects with Grounding DINO, SAM 2, DINOv2, and SigLIP...")
+        try:
+            from spatial_change.semantic import compare_visits
+            semantic = compare_visits(frames_a, frames_b)
+        except Exception as exc:
+            print(f"Open-set detection did not finish: {exc}")
+            semantic = None
+        if semantic is not None:
+            result, marked_before, marked_after = semantic
+            marked = (marked_before, marked_after)
+            metadata_note = "Objects come from Grounding DINO boxes, SAM 2 masks, DINOv2 matching, and SigLIP labels."
+        else:
+            metadata_note = None
+    else:
+        metadata_note = None
+    if marked is None and inlier_count < 80:
+        result.changes.clear()
+        result.summary = (
+            "No object was marked. These two clips do not lock into one map "
+            f"({inlier_count} shared places). They take in different parts of the room, "
+            "so a box on one picture would not sit on the same thing in the other."
+        )
+    elif marked is None:
+        identify_on_frames(result, before_bgr, after_bgr)
     print(result.summary)
 
     metadata = {
@@ -104,6 +133,8 @@ def run_comparison(
         "change_threshold_m": round(float(result.tau), 4),
         "gauge": "Median sparse depth in each clip is normalised to 2 m, then a similarity aligns the second map onto the first. Units are approximate metres.",
     }
+    if metadata_note:
+        metadata["objects"] = metadata_note
     if ground_truth:
         metadata["score"] = _score(result, json.loads(Path(ground_truth).read_text(encoding="utf-8")))
         print(
@@ -111,7 +142,9 @@ def run_comparison(
             f"/{metadata['score']['expected']} changes matched by type and colour."
         )
 
-    _write_outputs(out, frames_a, frames_b, cloud_a, colors_a, cloud_b, colors_b, result, metadata)
+    _write_outputs(
+        out, frames_a, frames_b, cloud_a, colors_a, cloud_b, colors_b, result, metadata, marked=marked,
+    )
     print(f"Wrote the report and viewer to {out}")
     return result
 
@@ -238,7 +271,7 @@ def _score(result: ChangeResult, ground_truth: dict) -> dict:
     }
 
 
-def _write_outputs(out, frames_a, frames_b, cloud_a, colors_a, cloud_b, colors_b, result, metadata) -> None:
+def _write_outputs(out, frames_a, frames_b, cloud_a, colors_a, cloud_b, colors_b, result, metadata, marked=None) -> None:
     write_report(out / "report.json", result, metadata)
     write_ply(out / "scene_before.ply", cloud_a, colors_a)
     write_ply(out / "scene_after.ply", cloud_b, colors_b)
@@ -253,11 +286,16 @@ def _write_outputs(out, frames_a, frames_b, cloud_a, colors_a, cloud_b, colors_b
             change_colors.append(cols)
     if change_points:
         write_ply(out / "changes.ply", np.concatenate(change_points), np.concatenate(change_colors))
-    before_bgr = cv2.cvtColor(frames_a[len(frames_a) // 2], cv2.COLOR_RGB2BGR)
-    after_bgr = cv2.cvtColor(frames_b[len(frames_b) // 2], cv2.COLOR_RGB2BGR)
-    cv2.imwrite(str(out / "before_frame.png"), before_bgr)
-    cv2.imwrite(str(out / "after_frame.png"), after_bgr)
-    write_preview(out / "preview.png", before_bgr, after_bgr, cloud_a, colors_a, cloud_b, colors_b, result)
+    if marked is None:
+        before_bgr = cv2.cvtColor(frames_a[len(frames_a) // 2], cv2.COLOR_RGB2BGR)
+        after_bgr = cv2.cvtColor(frames_b[len(frames_b) // 2], cv2.COLOR_RGB2BGR)
+        marked_before = draw_identification(before_bgr, result, "before")
+        marked_after = draw_identification(after_bgr, result, "after")
+    else:
+        marked_before, marked_after = marked
+    cv2.imwrite(str(out / "before_frame.png"), marked_before)
+    cv2.imwrite(str(out / "after_frame.png"), marked_after)
+    write_preview(out / "preview.png", marked_before, marked_after, cloud_a, colors_a, cloud_b, colors_b, result)
     write_viewer(
         out / "viewer.html",
         {

@@ -152,10 +152,10 @@ class App(BaseHTTPRequestHandler):
         self._send_json({"error": "Not found"}, status=404)
 
     def _sample_payload(self) -> dict:
-        directory = workspace() / "runs" / "demo"
+        directory = _sample_dir()
         report_path = directory / "report.json"
         if not report_path.exists():
-            raise FileNotFoundError("No scored room yet. Run the synthetic room from the page.")
+            raise FileNotFoundError("No comparison yet. Upload two recordings, or run the synthetic room.")
         report = json.loads(report_path.read_text(encoding="utf-8"))
         return {"id": "sample", "status": "done", "log": [], "error": None, "report": report}
 
@@ -344,9 +344,19 @@ class _capture:
         self.original.flush()
 
 
+def _sample_dir() -> Path:
+    ui = workspace() / "runs" / "ui"
+    reports = []
+    if ui.is_dir():
+        reports = [path / "report.json" for path in ui.iterdir() if (path / "report.json").is_file()]
+    if reports:
+        return max(reports, key=lambda path: path.stat().st_mtime).parent
+    return workspace() / "runs" / "demo"
+
+
 def _job_dir(job_id: str) -> Path:
     if job_id == "sample":
-        return workspace() / "runs" / "demo"
+        return _sample_dir()
     if not job_id.isalnum():
         raise FileNotFoundError("Unknown comparison")
     with _LOCK:

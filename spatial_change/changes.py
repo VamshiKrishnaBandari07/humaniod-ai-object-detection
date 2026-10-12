@@ -147,6 +147,9 @@ def _color_mass_changes(
         cols_b = colors_b[mask_b]
         enough_a = len(pts_a) >= min_points
         enough_b = len(pts_b) >= min_points
+        # A curtain, tile run, or wall is bigger than one object. Leave it unmarked.
+        if (len(pts_a) and _extent(pts_a) > 0.9) or (len(pts_b) and _extent(pts_b) > 0.9):
+            continue
         if enough_a and enough_b:
             centroid_a = pts_a.mean(axis=0)
             centroid_b = pts_b.mean(axis=0)
@@ -278,6 +281,10 @@ def _where(point: np.ndarray, lo: np.ndarray, hi: np.ndarray, up: np.ndarray) ->
     else:
         height = "around mid-height"
     return f"{horizontal}, {depth}, {height}"
+
+
+def resync_summary(result: ChangeResult) -> None:
+    result.summary = _summarise(result.changes)
 
 
 def _summarise(changes: list[Change]) -> str:

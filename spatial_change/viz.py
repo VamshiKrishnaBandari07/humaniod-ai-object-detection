@@ -8,7 +8,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from spatial_change.changes import ChangeResult
+from spatial_change.changes import ChangeResult, resync_summary
 
 
 def write_ply(path: str | Path, points: np.ndarray, colors: np.ndarray) -> None:
@@ -79,6 +79,47 @@ def write_report(path: str | Path, result: ChangeResult, metadata: dict) -> None
     Path(path).with_suffix(".md").write_text("\n".join(lines), encoding="utf-8")
 
 
+def identify_on_frames(result: ChangeResult, before_bgr: np.ndarray, after_bgr: np.ndarray) -> None:
+    """Keep a change only when the same colour is a small object in the pictures, then name that place."""
+    image_area = float(before_bgr.shape[0] * before_bgr.shape[1])
+    kept = []
+    for change in result.changes:
+        before_box = None if change.kind == "added" else _object_box(before_bgr, change.color_name)
+        after_box = None if change.kind == "removed" else _object_box(after_bgr, change.color_name)
+        before_area = 0 if before_box is None else before_box[2] * before_box[3]
+        after_area = 0 if after_box is None else after_box[2] * after_box[3]
+        if max(before_area, after_area) > 0.18 * image_area:
+            continue
+        if change.kind == "removed" and after_area > max(800, 0.45 * before_area):
+            continue
+        if change.kind == "added" and before_area > max(800, 0.45 * after_area):
+            continue
+        sentence = _picture_sentence(change, before_box, after_box, before_bgr.shape)
+        if sentence:
+            change.description = sentence
+        kept.append(change)
+    result.changes = kept
+    resync_summary(result)
+
+
+def draw_identification(image_bgr: np.ndarray, result: ChangeResult, visit: str) -> np.ndarray:
+    """Box every identified object on one recording."""
+    canvas = image_bgr.copy()
+    for change in result.changes:
+        if visit == "before" and change.kind == "added":
+            continue
+        if visit == "after" and change.kind == "removed":
+            continue
+        box = _object_box(image_bgr, change.color_name)
+        if box is None:
+            continue
+        tag = {"moved": "MOVED", "added": "ADDED", "removed": "REMOVED"}[change.kind]
+        if change.kind == "moved":
+            tag = "FROM" if visit == "before" else "TO"
+        _draw_tag(canvas, box, f"{tag}  {change.color_name.upper()}", _bgr(change.rgb))
+    return canvas
+
+
 def write_preview(
     path: str | Path,
     before_bgr: np.ndarray,
@@ -89,23 +130,32 @@ def write_preview(
     colors_b: np.ndarray,
     result: ChangeResult,
 ) -> None:
-    """A single image: both recordings, a top-down map, and the written summary."""
-    canvas = np.full((820, 1280, 3), 18, dtype=np.uint8)
+    """The answer sheet: both recordings with the identified objects boxed, then the sentences."""
+    del points_a, colors_a, points_b, colors_b
+    canvas = np.full((820, 1280, 3), 16, dtype=np.uint8)
+    _label(canvas, "Identified changes", 28, 32, scale=0.7)
+    _label(canvas, "Earlier visit", 28, 56, scale=0.45)
+    _label(canvas, "Later visit", 652, 56, scale=0.45)
     left = _fit(before_bgr, 600, 340)
     right = _fit(after_bgr, 600, 340)
-    canvas[40:40 + left.shape[0], 30:30 + left.shape[1]] = left
-    canvas[40:40 + right.shape[0], 650:650 + right.shape[1]] = right
-    _label(canvas, "Before", 30, 28)
-    _label(canvas, "After", 650, 28)
-    top = _topdown(points_a, colors_a, points_b, colors_b, result, 560, 380)
-    canvas[410:410 + top.shape[0], 30:30 + top.shape[1]] = top
-    _label(canvas, _legend(result), 30, 400)
-    y = 430
-    for line in _wrap(result.summary, 70):
-        if y > 790:
+    top = 68
+    canvas[top:top + left.shape[0], 28:28 + left.shape[1]] = left
+    canvas[top:top + right.shape[0], 652:652 + right.shape[1]] = right
+    y = top + left.shape[0] + 36
+    if not result.changes:
+        _label(canvas, result.summary, 28, y, scale=0.5)
+    for change in result.changes:
+        chip = _bgr(change.rgb)
+        cv2.rectangle(canvas, (28, y - 14), (46, y + 4), chip, -1)
+        _label(canvas, change.kind.upper(), 56, y, scale=0.5)
+        for line in _wrap(change.description, 108):
+            y += 22
+            _label(canvas, line, 56, y, scale=0.48)
+            if y > 750:
+                break
+        y += 28
+        if y > 750:
             break
-        _label(canvas, line, 620, y, scale=0.45)
-        y += 22
     cv2.imwrite(str(path), canvas)
 
 
@@ -148,6 +198,118 @@ def _pack_layer(points: np.ndarray, colors: np.ndarray, limit: int) -> list[list
         colors = colors[choice]
     packed = np.concatenate([np.round(points, 3), np.clip(colors, 0, 255).astype(int)], axis=1)
     return packed.tolist()
+
+
+def _object_box(image_bgr: np.ndarray, name: str) -> tuple[int, int, int, int] | None:
+    rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+    hue = hsv[:, :, 0].astype(np.float64) / 180.0
+    saturation = hsv[:, :, 1].astype(np.float64) / 255.0
+    value = hsv[:, :, 2].astype(np.float64) / 255.0
+    mask = (saturation >= 0.42) & (value >= 0.22) & _hue_is(hue, value, name)
+    mask_u8 = mask.astype(np.uint8) * 255
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask_u8 = cv2.morphologyEx(mask_u8, cv2.MORPH_CLOSE, kernel)
+    mask_u8 = cv2.morphologyEx(mask_u8, cv2.MORPH_OPEN, kernel)
+    contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    contour = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(contour) < 120:
+        return None
+    x, y, width, height = cv2.boundingRect(contour)
+    return int(x), int(y), int(width), int(height)
+
+
+def _hue_is(hue: np.ndarray, value: np.ndarray, name: str) -> np.ndarray:
+    if name == "red":
+        return (hue < 0.045) | (hue >= 0.95)
+    if name == "orange":
+        return (hue >= 0.045) & (hue < 0.09)
+    if name == "yellow":
+        return (hue >= 0.09) & (hue < 0.18)
+    if name == "brown":
+        return (hue >= 0.18) & (hue < 0.25) & (value < 0.55)
+    if name == "green":
+        return (hue >= 0.25) & (hue < 0.48)
+    if name == "cyan":
+        return (hue >= 0.48) & (hue < 0.58)
+    if name == "blue":
+        return (hue >= 0.58) & (hue < 0.78)
+    if name == "purple":
+        return (hue >= 0.78) & (hue < 0.94)
+    return np.zeros(hue.shape, dtype=bool)
+
+
+def _picture_sentence(change, before_box, after_box, shape) -> str | None:
+    width = shape[1]
+
+    def side(box) -> str:
+        center = (box[0] + box[2] / 2.0) / width
+        if center < 0.40:
+            return "left"
+        if center > 0.60:
+            return "right"
+        return "middle"
+
+    def noun(name: str) -> str:
+        if name == "middle":
+            return "the middle"
+        return f"the {name} side"
+
+    def placed(name: str) -> str:
+        if name == "middle":
+            return "in the middle"
+        return f"on the {name} side"
+
+    label = change.label
+    if change.kind == "moved" and before_box is not None and after_box is not None:
+        sentence = (
+            f"A {label} moved from {noun(side(before_box))} of the first recording "
+            f"to {noun(side(after_box))} of the second."
+        )
+        if change.centroid_to is not None:
+            shift = float(np.linalg.norm(np.asarray(change.centroid_to) - np.asarray(change.centroid)))
+            sentence += f" In the shared map that shift is about {shift:.2f} m."
+        return sentence
+    if change.kind == "removed" and before_box is not None:
+        return (
+            f"A {label} {placed(side(before_box))} of the first recording was removed. "
+            "It is not in the second recording."
+        )
+    if change.kind == "added" and after_box is not None:
+        return (
+            f"A {label} appeared {placed(side(after_box))} of the second recording. "
+            "It was not in the first."
+        )
+    return None
+
+
+def _draw_tag(image: np.ndarray, box: tuple[int, int, int, int], text: str, color: tuple[int, int, int]) -> None:
+    x, y, width, height = box
+    x0 = max(x - 4, 1)
+    y0 = max(y - 4, 1)
+    x1 = min(x + width + 4, image.shape[1] - 2)
+    y1 = min(y + height + 4, image.shape[0] - 2)
+    cv2.rectangle(image, (x0, y0), (x1, y1), color, 2)
+    scale = 0.45
+    thickness = 1
+    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
+    label_top = y0 - th - 8
+    if label_top < 2:
+        label_top = min(y1 + 2, image.shape[0] - th - 8)
+    label_bottom = label_top + th + 6
+    label_right = min(x0 + tw + 8, image.shape[1] - 1)
+    cv2.rectangle(image, (x0, label_top), (label_right, label_bottom), color, -1)
+    cv2.putText(image, text, (x0 + 4, label_bottom - 4), cv2.FONT_HERSHEY_SIMPLEX, scale, (16, 18, 14), thickness, cv2.LINE_AA)
+
+
+def _bgr(rgb: np.ndarray) -> tuple[int, int, int]:
+    rgb = np.asarray(rgb, dtype=np.float64)
+    if rgb.max() <= 1.0:
+        rgb = rgb * 255.0
+    rgb = np.clip(rgb, 0, 255).astype(int)
+    return int(rgb[2]), int(rgb[1]), int(rgb[0])
 
 
 def _legend(result: ChangeResult) -> str:

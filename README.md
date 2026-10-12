@@ -54,6 +54,8 @@ python -m spatial_change run --before before.mp4 --after after.mp4 --out runs/ro
 
 Without that file the tool assumes a vertical field of view of 62 degrees, which is typical for a phone's main camera. `--fov` overrides it. Frames are sampled (default 12) and scaled so the long side is at most 960 pixels.
 
+On a real recording the picture marks come from open-set models, not from colour blobs. Grounding DINO proposes bottles, curtains, and the other indoor objects. SAM 2 tightens each box onto the object. DINOv2 decides whether that crop is the same thing in the other visit. SigLIP checks the label. A box is drawn only on the frame where that object was detected, so the mark sits on the object you can see.
+
 ## How it works
 
 ```mermaid
